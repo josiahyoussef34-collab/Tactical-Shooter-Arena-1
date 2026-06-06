@@ -1707,6 +1707,8 @@ export class FPSGame {
         this.playerDead = false;
         this.playerDying = false;
         this.health = MAX_HEALTH;
+        this.magAmmo = MAG_SIZE;
+        this.reserveAmmo = RESERVE_AMMO;
         this.playerPos.set(0, STAND_HEIGHT, 12);
         this.velX = 0; this.velZ = 0; this.velocityY = 0;
         this.isGrounded = true;
@@ -1846,6 +1848,7 @@ export class FPSGame {
       enemy.alive = true;
       enemy.dying = false;
       enemy.deathTimer = 0;
+      enemy.kills = 0;
       enemy.mesh.visible = true;
       enemy.mesh.rotation.set(0, 0, 0);
       enemy.hitTimer = 0;

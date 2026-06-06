@@ -224,7 +224,21 @@ function GameInner() {
             <div style={{ marginBottom: 8 }}>
               <div style={{ ...styles.hudLabel, marginBottom: 6 }}>WINNER</div>
               <div style={{ fontFamily: "monospace", fontSize: 16, color: "#fff" }}>
-                {hud.resultLabel || (hud.playerKills > hud.enemyKills ? "PLAYER" : hud.enemyKills > hud.playerKills ? "ENEMY" : "DRAW")}
+                {hud.resultLabel === "You"
+                  ? "You won"
+                  : hud.resultLabel === "DRAW"
+                  ? "Draw"
+                  : `${hud.resultLabel} won`}
+              </div>
+            </div>
+            <div style={{ width: "100%", marginTop: 16, textAlign: "left" }}>
+              <div style={{ ...styles.hudLabel, marginBottom: 6 }}>FINAL SCOREBOARD</div>
+              <div style={{ display: "grid", gap: 4 }}>
+                {hud.scoreboard.map((entry) => (
+                  <div key={entry.id} style={{ color: entry.isYou ? "#2ecc71" : "#fff", fontFamily: "monospace", fontSize: 14 }}>
+                    {entry.name}: {entry.kills}
+                  </div>
+                ))}
               </div>
             </div>
             <button style={styles.startBtn} onClick={handleRestart}>
