@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "FPS Prototype"
+version = "1.0.0"
+id = "artifacts/fps-game"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19237
+
+[services.development]
+run = "pnpm --filter @workspace/fps-game run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/fps-game", "run", "build" ]
+publicDir = "artifacts/fps-game/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19237"
+BASE_PATH = "/"
