@@ -148,7 +148,7 @@ const ENEMY_ATTACK_RANGE            = 18;    // max distance enemy can shoot
 const ENEMY_HIT_FLASH_DURATION      = 0.18;  // enemy white flash when hit
 const ENEMY_COUNT                   = 5;     // number of enemy bots in the match
 const ENEMY_MOVE_SPEED              = 2.0;   // wandering/movement speed
-const ENEMY_FIRE_RATE               = 1.8;   // seconds per shot from enemies
+const ENEMY_FIRE_RATE               = 1.2;   // seconds per shot from enemies (lower = faster)
 const ENEMY_ACCURACY                = 0.72;  // 0..1 where 1 is perfect accuracy
 const ENEMY_TRACER_DURATION         = 0.14;  // seconds enemy tracer remains visible
 const ENEMY_SPAWN_POINTS: Array<[number, number, number]> = [
@@ -179,9 +179,13 @@ const RELOAD_TIME        = 1.5;  // seconds to complete a reload
 // Reload animation tuning
 const RELOAD_GUN_ROTATION   = 1.2;  // radians; gun tilts sideways this much (≈69°)
 const RELOAD_MAG_DROP_DISTANCE = 0.35;  // how far magazine drops down (units)
-const RELOAD_HAND_MOVE_DIST = 0.4;   // how far the placeholder hand travels (units)
+const RELOAD_HAND_MOVE_DIST = 0.17;   // how far the placeholder hand travels (units) — tuned for left-side insertion
 const RELOAD_MIDPOINT_RATIO = 0.5;   // at 50% progress, swap from old to new magazine
 // ─────────────────────────────────────────────────────────────────────────
+
+// Enemy HUD positioning (easy to tweak)
+const ENEMY_HEALTHBAR_Y = 1.95;   // world-local Y position for enemy health bar (lower = closer to head)
+const ENEMY_NAME_OFFSET = 0.16;   // vertical offset above the health bar for the name label
 
 // ---------------------------------------------------------------------------
 // Helper — Axis-Aligned Bounding Box (AABB) for collision
@@ -533,7 +537,7 @@ export class FPSGame {
     const magGeo = new THREE.BoxGeometry(0.06, 0.12, 0.08);
     const magMat = new THREE.MeshLambertMaterial({ color: 0x3d3d3d });
     const mag = new THREE.Mesh(magGeo, magMat);
-    mag.position.set(0, -0.14, 0.06);
+    mag.position.set(-0.08, -0.14, 0.06);
     group.add(mag);
     this.magazineMesh = mag;
 
@@ -731,7 +735,7 @@ export class FPSGame {
     group.add(muzzleFlash);
 
     const hbGroup = new THREE.Group();
-    hbGroup.position.set(0, 2.2, 0);
+    hbGroup.position.set(0, ENEMY_HEALTHBAR_Y, 0);
 
     const hbBg = new THREE.Mesh(
       new THREE.PlaneGeometry(1.0, 0.12),
@@ -747,6 +751,23 @@ export class FPSGame {
     hbFore.position.set(0, 0, 0.001);
     hbGroup.add(hbFore);
     group.add(hbGroup);
+
+    // Name label: small canvas texture placed above the health bar
+    const nameCanvas = document.createElement("canvas");
+    nameCanvas.width = 256; nameCanvas.height = 64;
+    const nctx = nameCanvas.getContext("2d")!;
+    nctx.clearRect(0,0,nameCanvas.width, nameCanvas.height);
+    nctx.font = "bold 28px sans-serif";
+    nctx.textAlign = "center";
+    nctx.fillStyle = "#ffffff";
+    const displayName = `Player ${id + 1}`;
+    nctx.fillText(displayName, nameCanvas.width / 2, 44);
+    const nameTex = new THREE.CanvasTexture(nameCanvas);
+    const nameMat = new THREE.MeshBasicMaterial({ map: nameTex, transparent: true });
+    const nameGeo = new THREE.PlaneGeometry(0.9, 0.18);
+    const nameMesh = new THREE.Mesh(nameGeo, nameMat);
+    nameMesh.position.set(0, ENEMY_NAME_OFFSET, 0.002);
+    hbGroup.add(nameMesh);
 
     group.position.copy(position);
     group.rotation.set(0, 0, 0);
@@ -1056,19 +1077,19 @@ export class FPSGame {
     let reloadDip = 0;
 
     if (reloadAnim < phase1End) {
-      // Phase 1: rotate gun sideways (0 → max)
+      // Phase 1: rotate gun sideways (0 → max) toward the left
       const progress = reloadAnim / phase1End;
-      gunRotationZ = progress * RELOAD_GUN_ROTATION;
+      gunRotationZ = progress * -RELOAD_GUN_ROTATION;
     } else if (reloadAnim < phase2End) {
-      // Phase 2: gun stays tilted, magazine drops out
-      gunRotationZ = RELOAD_GUN_ROTATION;
+      // Phase 2: gun stays tilted (left), magazine drops out
+      gunRotationZ = -RELOAD_GUN_ROTATION;
     } else if (reloadAnim < phase3End) {
-      // Phase 3: gun stays tilted, hand inserts magazine
-      gunRotationZ = RELOAD_GUN_ROTATION;
+      // Phase 3: gun stays tilted (left), hand inserts magazine
+      gunRotationZ = -RELOAD_GUN_ROTATION;
     } else {
       // Phase 4: rotate gun back to normal (max → 0)
       const progress = (reloadAnim - phase3End) / (1 - phase3End);
-      gunRotationZ = RELOAD_GUN_ROTATION * (1 - progress);
+      gunRotationZ = -RELOAD_GUN_ROTATION * (1 - progress);
     }
 
     // Magazine animation: drop out (phase 2), then hide and return (phase 3)
