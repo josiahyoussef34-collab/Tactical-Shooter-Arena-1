@@ -176,6 +176,8 @@ const MAG_SIZE           = 30;   // bullets per magazine
 const RELOAD_MAGAZINES   = 3;    // number of spare magazines carried
 const RESERVE_AMMO       = MAG_SIZE * RELOAD_MAGAZINES; // starting reserve supply
 const RELOAD_TIME        = 1.5;  // seconds to complete a reload
+const RELOAD_MAG_DROP_DISTANCE = 0.25;  // how far magazine drops down (units)
+const RELOAD_MIDPOINT_RATIO    = 0.5;   // at 50% progress, refill ammo & swap mags
 // ─────────────────────────────────────────────────────────────────────────
 
 // ---------------------------------------------------------------------------
@@ -236,6 +238,7 @@ export class FPSGame {
   private weaponScene: THREE.Scene;
   private weaponCamera: THREE.PerspectiveCamera;
   private weaponMesh!: THREE.Group;
+  private magazineMesh!: THREE.Mesh;  // magazine object for reload animation
   private weaponBobTime = 0;
   private isAiming = false;
   private aimBlend = 0;
@@ -328,6 +331,7 @@ export class FPSGame {
   private reserveAmmo = RESERVE_AMMO; // bullets remaining in reserve
   private isReloading = false;
   private reloadTimer = 0;
+  private reloadAmmoRefilled = false;  // track if ammo was refilled at midpoint
   private gameOver = false;
   private won = false;
 
@@ -520,6 +524,14 @@ export class FPSGame {
   // -----------------------------------------------------------------------
   private buildWeaponMesh() {
     const group = new THREE.Group();
+
+    // Magazine — small box hanging below grip (insert point)
+    const magGeo = new THREE.BoxGeometry(0.06, 0.12, 0.08);
+    const magMat = new THREE.MeshLambertMaterial({ color: 0x3d3d3d });
+    const mag = new THREE.Mesh(magGeo, magMat);
+    mag.position.set(0, -0.14, 0.06);
+    group.add(mag);
+    this.magazineMesh = mag;
 
     // Barrel — long thin box
     const barrelGeo = new THREE.BoxGeometry(0.05, 0.05, 0.35);
@@ -1013,16 +1025,35 @@ export class FPSGame {
     const weaponZ = -0.4  + (ADS_WEAPON_Z + 0.4)  * this.aimBlend;
 
     const reloadAnim = this.isReloading
-      ? Math.sin(Math.max(0, 1 - this.reloadTimer / RELOAD_TIME) * Math.PI)
+      ? Math.max(0, 1 - this.reloadTimer / RELOAD_TIME)
       : 0;
+
+    // Magazine animation: drop old mag out (0-50%), then bring new mag in (50-100%)
+    if (this.magazineMesh) {
+      if (reloadAnim < RELOAD_MIDPOINT_RATIO) {
+        // First half: old magazine drops down
+        const dropProgress = reloadAnim / RELOAD_MIDPOINT_RATIO;  // 0 to 1
+        this.magazineMesh.position.y = -0.14 - dropProgress * RELOAD_MAG_DROP_DISTANCE;
+        this.magazineMesh.visible = true;
+      } else {
+        // Second half: new magazine comes back up
+        const insertProgress = (reloadAnim - RELOAD_MIDPOINT_RATIO) / (1 - RELOAD_MIDPOINT_RATIO);  // 0 to 1
+        this.magazineMesh.position.y = -0.14 - (1 - insertProgress) * RELOAD_MAG_DROP_DISTANCE;
+        this.magazineMesh.visible = true;
+      }
+    }
+
+    // Weapon dips and tilts during reload
+    const reloadDip = Math.sin(reloadAnim * Math.PI) * 0.12;
+    const reloadTilt = Math.sin(reloadAnim * Math.PI) * 0.25;
 
     if (this.weaponMesh) {
       this.weaponMesh.position.set(
         weaponX + bobX + this.swayX,
-        weaponY + bobY + this.swayY - reloadAnim * 0.08,
+        weaponY + bobY + this.swayY - reloadDip,
         weaponZ
       );
-      this.weaponMesh.rotation.x = reloadAnim * 0.18;
+      this.weaponMesh.rotation.x = reloadTilt;
     }
   }
 
@@ -1189,18 +1220,28 @@ export class FPSGame {
   }
 
   private updateReload(dt: number) {
-    if (!this.isReloading) return;
+    if (!this.isReloading) {
+      this.reloadAmmoRefilled = false; // reset flag when not reloading
+      return;
+    }
 
     this.reloadTimer -= dt;
     this.publishHUD(); // update progress bar every frame
 
-    if (this.reloadTimer <= 0) {
+    // At midpoint of reload (50% progress), refill ammo and swap magazines
+    const reloadProgress = Math.max(0, 1 - this.reloadTimer / RELOAD_TIME);
+    if (!this.reloadAmmoRefilled && reloadProgress >= RELOAD_MIDPOINT_RATIO) {
       // Pull only as many bullets as needed (partial mag) and as many as
       // reserve has — never invent bullets from thin air.
       const needed = MAG_SIZE - this.magAmmo;
       const pulled  = Math.min(needed, this.reserveAmmo);
       this.magAmmo     += pulled;
       this.reserveAmmo -= pulled;
+      this.reloadAmmoRefilled = true;
+      this.publishHUD();
+    }
+
+    if (this.reloadTimer <= 0) {
       this.isReloading  = false;
       this.reloadTimer  = 0;
       this.publishHUD();
@@ -1709,13 +1750,15 @@ export class FPSGame {
         this.health = MAX_HEALTH;
         this.magAmmo = MAG_SIZE;
         this.reserveAmmo = RESERVE_AMMO;
+        this.isReloading = false;
+        this.reloadTimer = 0;
+        this.reloadAmmoRefilled = false;
         this.playerPos.set(0, STAND_HEIGHT, 12);
         this.velX = 0; this.velZ = 0; this.velocityY = 0;
         this.isGrounded = true;
         this.stance = "standing";
         this.eyeHeight = STAND_HEIGHT;
         this.isAiming = false;
-        this.isReloading = false;
         this.playerRegenAccum = 0;
         this.lastPlayerDamageTimer = HEALTH_REGEN_DELAY;
         this.publishHUD();
@@ -1838,6 +1881,7 @@ export class FPSGame {
     this.reserveAmmo = RESERVE_AMMO;
     this.isReloading = false;
     this.reloadTimer = 0;
+    this.reloadAmmoRefilled = false;
     this.gameOver = false;
     this.won = false;
     this.playerKills = 0;

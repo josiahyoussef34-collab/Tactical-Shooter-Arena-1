@@ -215,13 +215,7 @@ function GameInner() {
         <div style={styles.overlay}>
           <div style={styles.card}>
             <h1 style={{ ...styles.title, color: "#fff" }}>MATCH OVER</h1>
-            <p style={{ ...styles.subtitle, marginBottom: 8 }}>
-              Final Score
-            </p>
-            <div style={{ color: "#fff", fontFamily: "monospace", fontSize: 18, marginBottom: 8 }}>
-              Player: <strong>{hud.playerKills}</strong> — Enemy: <strong>{hud.enemyKills}</strong>
-            </div>
-            <div style={{ marginBottom: 8 }}>
+            <div style={{ marginBottom: 16 }}>
               <div style={{ ...styles.hudLabel, marginBottom: 6 }}>WINNER</div>
               <div style={{ fontFamily: "monospace", fontSize: 16, color: "#fff" }}>
                 {hud.resultLabel === "You"
