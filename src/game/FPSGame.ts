@@ -1883,6 +1883,20 @@ export class FPSGame {
   // Publish HUD state to React
   // -----------------------------------------------------------------------
   private publishHUD() {
+    // Build player list including You + all enemies
+    const allScores = [
+      { id: "you", name: "You", kills: this.playerKills, isYou: true },
+      ...this.enemies.map((enemy) => ({ id: `enemy-${enemy.id}`, name: `Player ${enemy.id + 1}`, kills: enemy.kills, isYou: false })),
+    ];
+
+    // Sort scoreboard by kills descending; stable tie-breaker: You first, then by id
+    const scoreboardSorted = [...allScores].sort((a, b) => {
+      if (b.kills !== a.kills) return b.kills - a.kills; // higher kills first
+      if (a.isYou && !b.isYou) return -1;
+      if (!a.isYou && b.isYou) return 1;
+      return a.id.localeCompare(b.id);
+    });
+
     const state: HUDState = {
       health: Math.round(this.health),
       magAmmo: this.magAmmo,
@@ -1903,20 +1917,8 @@ export class FPSGame {
       matchTime: this.matchTime,
       playerKills: this.playerKills,
       enemyKills: this.enemyKills,
-      scoreboard: [
-        { id: "you", name: "You", kills: this.playerKills, isYou: true },
-        ...this.enemies.map((enemy) => ({
-          id: `enemy-${enemy.id}`,
-          name: `Player ${enemy.id + 1}`,
-          kills: enemy.kills,
-          isYou: false,
-        })),
-      ],
+      scoreboard: scoreboardSorted,
       resultLabel: (() => {
-        const allScores = [
-          { name: "You", kills: this.playerKills },
-          ...this.enemies.map((enemy) => ({ name: `Player ${enemy.id + 1}`, kills: enemy.kills })),
-        ];
         const topKills = Math.max(...allScores.map((entry) => entry.kills));
         const leaders = allScores.filter((entry) => entry.kills === topKills);
         return leaders.length === 1 ? leaders[0].name : "DRAW";
