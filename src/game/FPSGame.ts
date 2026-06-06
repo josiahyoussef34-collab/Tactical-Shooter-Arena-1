@@ -176,8 +176,11 @@ const MAG_SIZE           = 30;   // bullets per magazine
 const RELOAD_MAGAZINES   = 3;    // number of spare magazines carried
 const RESERVE_AMMO       = MAG_SIZE * RELOAD_MAGAZINES; // starting reserve supply
 const RELOAD_TIME        = 1.5;  // seconds to complete a reload
-const RELOAD_MAG_DROP_DISTANCE = 0.25;  // how far magazine drops down (units)
-const RELOAD_MIDPOINT_RATIO    = 0.5;   // at 50% progress, refill ammo & swap mags
+// Reload animation tuning
+const RELOAD_GUN_ROTATION   = 1.2;  // radians; gun tilts sideways this much (≈69°)
+const RELOAD_MAG_DROP_DISTANCE = 0.35;  // how far magazine drops down (units)
+const RELOAD_HAND_MOVE_DIST = 0.4;   // how far the placeholder hand travels (units)
+const RELOAD_MIDPOINT_RATIO = 0.5;   // at 50% progress, swap from old to new magazine
 // ─────────────────────────────────────────────────────────────────────────
 
 // ---------------------------------------------------------------------------
@@ -239,6 +242,7 @@ export class FPSGame {
   private weaponCamera: THREE.PerspectiveCamera;
   private weaponMesh!: THREE.Group;
   private magazineMesh!: THREE.Mesh;  // magazine object for reload animation
+  private handMesh!: THREE.Mesh;      // placeholder hand for inserting magazine
   private weaponBobTime = 0;
   private isAiming = false;
   private aimBlend = 0;
@@ -567,6 +571,14 @@ export class FPSGame {
     this.muzzleFlash.position.set(0, 0, -0.28);
     this.muzzleFlash.visible = false;
     this.weaponMesh.add(this.muzzleFlash);
+
+    // Placeholder hand for reload animation — simple box to push magazine in
+    const handGeo = new THREE.BoxGeometry(0.08, 0.12, 0.06);
+    const handMat = new THREE.MeshLambertMaterial({ color: 0xffb88c }); // skin tone
+    this.handMesh = new THREE.Mesh(handGeo, handMat);
+    this.handMesh.position.set(-0.25, -0.22, -0.4);  // start position off to the side
+    this.handMesh.visible = false;
+    this.weaponScene.add(this.handMesh);
 
     // Red full-screen damage flash overlay
     this.damageFlash = new THREE.Mesh(
@@ -1028,24 +1040,78 @@ export class FPSGame {
       ? Math.max(0, 1 - this.reloadTimer / RELOAD_TIME)
       : 0;
 
-    // Magazine animation: drop old mag out (0-50%), then bring new mag in (50-100%)
+    // ──────────────────────────────────────────────────────────────
+    // RELOAD ANIMATION: Four phases
+    // ──────────────────────────────────────────────────────────────
+    // Phase 1 (0.0-0.25): Gun rotates sideways
+    // Phase 2 (0.25-0.5): Old magazine drops out while gun is tilted
+    // Phase 3 (0.5-0.75): Hand inserts new magazine
+    // Phase 4 (0.75-1.0): Gun rotates back to normal
+
+    const phase1End = 0.25;
+    const phase2End = 0.5;
+    const phase3End = 0.75;
+
+    let gunRotationZ = 0;
+    let reloadDip = 0;
+
+    if (reloadAnim < phase1End) {
+      // Phase 1: rotate gun sideways (0 → max)
+      const progress = reloadAnim / phase1End;
+      gunRotationZ = progress * RELOAD_GUN_ROTATION;
+    } else if (reloadAnim < phase2End) {
+      // Phase 2: gun stays tilted, magazine drops out
+      gunRotationZ = RELOAD_GUN_ROTATION;
+    } else if (reloadAnim < phase3End) {
+      // Phase 3: gun stays tilted, hand inserts magazine
+      gunRotationZ = RELOAD_GUN_ROTATION;
+    } else {
+      // Phase 4: rotate gun back to normal (max → 0)
+      const progress = (reloadAnim - phase3End) / (1 - phase3End);
+      gunRotationZ = RELOAD_GUN_ROTATION * (1 - progress);
+    }
+
+    // Magazine animation: drop out (phase 2), then hide and return (phase 3)
     if (this.magazineMesh) {
-      if (reloadAnim < RELOAD_MIDPOINT_RATIO) {
-        // First half: old magazine drops down
-        const dropProgress = reloadAnim / RELOAD_MIDPOINT_RATIO;  // 0 to 1
+      if (reloadAnim < phase2End) {
+        // Phases 1-2: old magazine drops
+        const dropProgress = reloadAnim / phase2End;
         this.magazineMesh.position.y = -0.14 - dropProgress * RELOAD_MAG_DROP_DISTANCE;
         this.magazineMesh.visible = true;
-      } else {
-        // Second half: new magazine comes back up
-        const insertProgress = (reloadAnim - RELOAD_MIDPOINT_RATIO) / (1 - RELOAD_MIDPOINT_RATIO);  // 0 to 1
+      } else if (reloadAnim < phase3End) {
+        // Phase 3: old magazine is hidden, new one slides back in
+        const insertProgress = (reloadAnim - phase2End) / (phase3End - phase2End);
         this.magazineMesh.position.y = -0.14 - (1 - insertProgress) * RELOAD_MAG_DROP_DISTANCE;
+        this.magazineMesh.visible = true;
+      } else {
+        // Phase 4: magazine returns to rest position
+        this.magazineMesh.position.y = -0.14;
         this.magazineMesh.visible = true;
       }
     }
 
-    // Weapon dips and tilts during reload
-    const reloadDip = Math.sin(reloadAnim * Math.PI) * 0.12;
-    const reloadTilt = Math.sin(reloadAnim * Math.PI) * 0.25;
+    // Hand animation: appears during phase 3 to push magazine in
+    if (this.handMesh) {
+      if (reloadAnim > phase2End && reloadAnim < phase3End) {
+        // Phase 3: hand moves in to insert magazine
+        const handProgress = (reloadAnim - phase2End) / (phase3End - phase2End);
+        // Hand moves from left side (negative X) toward the magazine
+        this.handMesh.position.x = -0.25 + handProgress * RELOAD_HAND_MOVE_DIST;
+        this.handMesh.visible = true;
+      } else {
+        // Hide hand during other phases
+        this.handMesh.visible = false;
+      }
+    }
+
+    // Weapon dips slightly during the rotation phases
+    if (reloadAnim < phase2End) {
+      reloadDip = Math.sin(reloadAnim / phase2End * Math.PI) * 0.06;
+    } else if (reloadAnim < phase3End) {
+      reloadDip = 0.06; // stay dipped while hand is working
+    } else {
+      reloadDip = Math.sin((reloadAnim - phase3End) / (1 - phase3End) * Math.PI) * 0.06;
+    }
 
     if (this.weaponMesh) {
       this.weaponMesh.position.set(
@@ -1053,7 +1119,9 @@ export class FPSGame {
         weaponY + bobY + this.swayY - reloadDip,
         weaponZ
       );
-      this.weaponMesh.rotation.x = reloadTilt;
+      // Rotate sideways (Z-axis) during reload to show magazine
+      this.weaponMesh.rotation.z = gunRotationZ;
+      this.weaponMesh.rotation.x = 0; // keep pitch neutral during reload
     }
   }
 

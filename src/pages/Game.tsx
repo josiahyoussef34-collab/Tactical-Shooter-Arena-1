@@ -215,26 +215,31 @@ function GameInner() {
         <div style={styles.overlay}>
           <div style={styles.card}>
             <h1 style={{ ...styles.title, color: "#fff" }}>MATCH OVER</h1>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ ...styles.hudLabel, marginBottom: 6 }}>WINNER</div>
-              <div style={{ fontFamily: "monospace", fontSize: 16, color: "#fff" }}>
+
+            {/* Winner section — larger and more prominent */}
+            <div style={{ marginBottom: 24, textAlign: "center", width: "100%" }}>
+              <div style={{ ...styles.hudLabel, marginBottom: 8, textAlign: "center" }}>WINNER</div>
+              <div style={{ fontFamily: "monospace", fontSize: 28, color: "#2ecc71", fontWeight: 700, letterSpacing: 2 }}>
                 {hud.resultLabel === "You"
-                  ? "You won"
+                  ? "YOU WON"
                   : hud.resultLabel === "DRAW"
-                  ? "Draw"
-                  : `${hud.resultLabel} won`}
+                  ? "DRAW"
+                  : `${hud.resultLabel.toUpperCase()} WON`}
               </div>
             </div>
-            <div style={{ width: "100%", marginTop: 16, textAlign: "left" }}>
-              <div style={{ ...styles.hudLabel, marginBottom: 6 }}>FINAL SCOREBOARD</div>
-              <div style={{ display: "grid", gap: 4 }}>
+
+            {/* Final scoreboard — centred */}
+            <div style={{ width: "100%", marginBottom: 20, textAlign: "center" }}>
+              <div style={{ ...styles.hudLabel, marginBottom: 8, textAlign: "center" }}>FINAL SCOREBOARD</div>
+              <div style={{ display: "grid", gap: 6, justifyItems: "center" }}>
                 {hud.scoreboard.map((entry) => (
-                  <div key={entry.id} style={{ color: entry.isYou ? "#2ecc71" : "#fff", fontFamily: "monospace", fontSize: 14 }}>
+                  <div key={entry.id} style={{ color: entry.isYou ? "#2ecc71" : "#fff", fontFamily: "monospace", fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>
                     {entry.name}: {entry.kills}
                   </div>
                 ))}
               </div>
             </div>
+
             <button style={styles.startBtn} onClick={handleRestart}>
               Restart
             </button>
