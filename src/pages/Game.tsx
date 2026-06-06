@@ -77,6 +77,7 @@ const INITIAL_HUD: HUDState = {
   showHitMarker: false,
   lastDamageAmount: 0,
   damageFlashActive: false,
+  deathTintActive: false,
   matchTime: 120,
   playerKills: 0,
   enemyKills: 0,
@@ -181,6 +182,9 @@ function GameInner() {
         style={{ width: "100%", height: "100%" }}
         onClick={() => setStarted(true)}
       />
+      {started && hud.deathTintActive && !hud.gameOver && (
+        <div style={styles.deathTint} />
+      )}
 
       {/* ── Click-to-start overlay (shown until pointer is locked) ── */}
       {!started && !hud.gameOver && (
@@ -428,6 +432,13 @@ const styles: Record<string, React.CSSProperties> = {
   hudLabel: {
     color: "rgba(255,255,255,0.45)",
     fontSize: 10, fontFamily: "monospace", letterSpacing: 3,
+  },
+  deathTint: {
+    position: "absolute",
+    inset: 0,
+    background: "rgba(255, 0, 0, 0.22)",
+    pointerEvents: "none",
+    zIndex: 9,
   },
   hudValue: {
     color: "#fff", fontSize: 20, fontFamily: "monospace", fontWeight: 700,

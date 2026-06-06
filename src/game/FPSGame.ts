@@ -52,6 +52,7 @@ export interface HUDState {
   // Damage feedback
   lastDamageAmount: number;  // amount of damage taken (0 if not damaged this frame)
   damageFlashActive: boolean; // red screen flash is visible
+  deathTintActive: boolean;   // red tint while dead / respawning
   // Match state
   matchTime: number; // seconds remaining
   playerKills: number;
@@ -172,7 +173,8 @@ const PLAYER_SPAWN_POINTS: Array<[number, number, number]> = [
 const MOUSE_SENSITIVITY  = 0.002;
 // ── Ammo & reload (easy to tune) ─────────────────────────────────────────
 const MAG_SIZE           = 30;   // bullets per magazine
-const RESERVE_AMMO       = 90;   // starting reserve supply (3 spare mags)
+const RELOAD_MAGAZINES   = 3;    // number of spare magazines carried
+const RESERVE_AMMO       = MAG_SIZE * RELOAD_MAGAZINES; // starting reserve supply
 const RELOAD_TIME        = 1.5;  // seconds to complete a reload
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -1010,12 +1012,17 @@ export class FPSGame {
     const weaponY = -0.18 + (ADS_WEAPON_Y + 0.18) * this.aimBlend;
     const weaponZ = -0.4  + (ADS_WEAPON_Z + 0.4)  * this.aimBlend;
 
+    const reloadAnim = this.isReloading
+      ? Math.sin(Math.max(0, 1 - this.reloadTimer / RELOAD_TIME) * Math.PI)
+      : 0;
+
     if (this.weaponMesh) {
       this.weaponMesh.position.set(
         weaponX + bobX + this.swayX,
-        weaponY + bobY + this.swayY,
+        weaponY + bobY + this.swayY - reloadAnim * 0.08,
         weaponZ
       );
+      this.weaponMesh.rotation.x = reloadAnim * 0.18;
     }
   }
 
@@ -1758,6 +1765,7 @@ export class FPSGame {
       showHitMarker: this.hitMarkerTimer > 0,
       lastDamageAmount: this.lastDamageAmount,
       damageFlashActive: this.damageFlashTimer > 0,
+      deathTintActive: this.playerDying || this.playerDead,
       matchTime: this.matchTime,
       playerKills: this.playerKills,
       enemyKills: this.enemyKills,
