@@ -184,8 +184,11 @@ const RELOAD_MIDPOINT_RATIO = 0.5;   // at 50% progress, swap from old to new ma
 // ─────────────────────────────────────────────────────────────────────────
 
 // Enemy HUD positioning (easy to tweak)
-const ENEMY_HEALTHBAR_Y = 1.95;   // world-local Y position for enemy health bar (lower = closer to head)
-const ENEMY_NAME_OFFSET = 0.16;   // vertical offset above the health bar for the name label
+const ENEMY_HEALTHBAR_Y = 1.55;   // world-local Y position for enemy health bar (lower = closer to head)
+const ENEMY_NAME_OFFSET = 0.18;   // vertical offset above the health bar for the name label
+const ENEMY_NAME_FONT_SIZE = 56;  // font size for enemy name labels
+const ENEMY_NAME_LABEL_WIDTH = 0.9; // world units for the name label plane width
+const ENEMY_NAME_LABEL_HEIGHT = 0.24; // world units for the name label plane height
 
 // ---------------------------------------------------------------------------
 // Helper — Axis-Aligned Bounding Box (AABB) for collision
@@ -754,17 +757,18 @@ export class FPSGame {
 
     // Name label: small canvas texture placed above the health bar
     const nameCanvas = document.createElement("canvas");
-    nameCanvas.width = 256; nameCanvas.height = 64;
+    nameCanvas.width = 256; nameCanvas.height = 96;
     const nctx = nameCanvas.getContext("2d")!;
-    nctx.clearRect(0,0,nameCanvas.width, nameCanvas.height);
-    nctx.font = "bold 28px sans-serif";
+    nctx.clearRect(0, 0, nameCanvas.width, nameCanvas.height);
+    nctx.font = `bold ${ENEMY_NAME_FONT_SIZE}px sans-serif`;
     nctx.textAlign = "center";
+    nctx.textBaseline = "middle";
     nctx.fillStyle = "#ffffff";
     const displayName = `Player ${id + 1}`;
-    nctx.fillText(displayName, nameCanvas.width / 2, 44);
+    nctx.fillText(displayName, nameCanvas.width / 2, nameCanvas.height / 2);
     const nameTex = new THREE.CanvasTexture(nameCanvas);
     const nameMat = new THREE.MeshBasicMaterial({ map: nameTex, transparent: true });
-    const nameGeo = new THREE.PlaneGeometry(0.9, 0.18);
+    const nameGeo = new THREE.PlaneGeometry(ENEMY_NAME_LABEL_WIDTH, ENEMY_NAME_LABEL_HEIGHT);
     const nameMesh = new THREE.Mesh(nameGeo, nameMat);
     nameMesh.position.set(0, ENEMY_NAME_OFFSET, 0.002);
     hbGroup.add(nameMesh);
