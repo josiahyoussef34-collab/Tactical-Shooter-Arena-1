@@ -56,6 +56,8 @@ export interface HUDState {
   matchTime: number; // seconds remaining
   playerKills: number;
   enemyKills: number;
+  scoreboard: Array<{ id: string; name: string; kills: number; isYou: boolean }>;
+  resultLabel: string;
   matchActive: boolean;
 }
 
@@ -204,6 +206,7 @@ interface EnemyState {
   regenAccum: number;
   targetType: "player" | "enemy" | null;
   targetId: number | null;
+  kills: number;
   hitTimer: number;
   hitColor: THREE.Color;
   normalColor: THREE.Color;
@@ -743,6 +746,7 @@ export class FPSGame {
       regenAccum: 0,
       targetType: null,
       targetId: null,
+      kills: 0,
       hitTimer: 0,
       hitColor: new THREE.Color(0xffffff),
       normalColor: new THREE.Color(0xe74c3c),
@@ -1117,7 +1121,7 @@ export class FPSGame {
   // -----------------------------------------------------------------------
   // Hit an enemy — apply damage, check kill, and update visual feedback
   // -----------------------------------------------------------------------
-  private hitEnemy(enemy: EnemyState, headshot = false) {
+  private hitEnemy(enemy: EnemyState, headshot = false, killerEnemyId: number | null = null) {
     const damage = headshot ? PLAYER_BODY_DAMAGE * HEADSHOT_MULTIPLIER : PLAYER_BODY_DAMAGE;
     enemy.health = Math.max(0, enemy.health - damage);
     enemy.hitTimer = 0.12;
@@ -1139,6 +1143,15 @@ export class FPSGame {
       enemy.dying = true;
       enemy.deathTimer = 1.2;
       enemy.shootTimer = Infinity;
+      if (killerEnemyId === null) {
+        this.playerKills += 1;
+      } else {
+        const killer = this.enemies.find((e) => e.id === killerEnemyId);
+        if (killer) {
+          killer.kills += 1;
+          this.enemyKills = this.enemies.reduce((sum, e) => sum + e.kills, 0);
+        }
+      }
     }
     this.publishHUD();
   }
@@ -1197,7 +1210,6 @@ export class FPSGame {
         enemy.mesh.rotation.x = Math.min(Math.PI / 2, enemy.mesh.rotation.x + dt * 2.0);
         enemy.mesh.position.y = enemy.mesh.position.y - dt * 0.6;
         if (enemy.deathTimer <= 0) {
-          this.playerKills += 1;
           enemy.dying = false;
           enemy.alive = false;
           enemy.respawnTimer = RESPAWN_DELAY;
@@ -1347,20 +1359,20 @@ export class FPSGame {
       const firstHit = hits[0];
       const blockedByObstacle = firstHit && firstHit.distance < dist - 0.15;
       if (!blockedByObstacle) {
-        this.applyPlayerDamage(ENEMY_BULLET_DAMAGE);
+        this.applyPlayerDamage(ENEMY_BULLET_DAMAGE, enemy.id);
       }
     } else if (target.type === "enemy" && target.id !== null) {
       const targetEnemy = this.enemies.find((e) => e.id === target.id);
       if (targetEnemy && targetEnemy.alive && !targetEnemy.dying) {
         const firstHit = hits[0];
         if (firstHit && this.isObjectPartOfGroup(firstHit.object, targetEnemy.mesh)) {
-          this.hitEnemy(targetEnemy, false);
+          this.hitEnemy(targetEnemy, false, enemy.id);
         }
       }
     }
   }
 
-  private applyPlayerDamage(amount: number) {
+  private applyPlayerDamage(amount: number, killerEnemyId: number | null = null) {
     if (this.playerDead || this.playerDying || !this.matchActive) return;
 
     this.health = Math.max(0, this.health - amount);
@@ -1372,7 +1384,13 @@ export class FPSGame {
 
     if (this.health <= 0) {
       this.health = 0;
-      this.enemyKills += 1;
+      if (killerEnemyId !== null) {
+        const killer = this.enemies.find((e) => e.id === killerEnemyId);
+        if (killer) {
+          killer.kills += 1;
+          this.enemyKills = this.enemies.reduce((sum, e) => sum + e.kills, 0);
+        }
+      }
       this.playerDead = true;
       this.playerDying = true;
       this.playerDeathTimer = DEATH_ANIM_TIME;
@@ -1743,6 +1761,24 @@ export class FPSGame {
       matchTime: this.matchTime,
       playerKills: this.playerKills,
       enemyKills: this.enemyKills,
+      scoreboard: [
+        { id: "you", name: "You", kills: this.playerKills, isYou: true },
+        ...this.enemies.map((enemy) => ({
+          id: `enemy-${enemy.id}`,
+          name: `Player ${enemy.id + 1}`,
+          kills: enemy.kills,
+          isYou: false,
+        })),
+      ],
+      resultLabel: (() => {
+        const allScores = [
+          { name: "You", kills: this.playerKills },
+          ...this.enemies.map((enemy) => ({ name: `Player ${enemy.id + 1}`, kills: enemy.kills })),
+        ];
+        const topKills = Math.max(...allScores.map((entry) => entry.kills));
+        const leaders = allScores.filter((entry) => entry.kills === topKills);
+        return leaders.length === 1 ? leaders[0].name : "DRAW";
+      })(),
       matchActive: this.matchActive,
     };
     this.hudCallback(state);

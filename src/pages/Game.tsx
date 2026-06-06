@@ -80,6 +80,15 @@ const INITIAL_HUD: HUDState = {
   matchTime: 120,
   playerKills: 0,
   enemyKills: 0,
+  scoreboard: [
+    { id: "you", name: "You", kills: 0, isYou: true },
+    { id: "enemy-0", name: "Player 1", kills: 0, isYou: false },
+    { id: "enemy-1", name: "Player 2", kills: 0, isYou: false },
+    { id: "enemy-2", name: "Player 3", kills: 0, isYou: false },
+    { id: "enemy-3", name: "Player 4", kills: 0, isYou: false },
+    { id: "enemy-4", name: "Player 5", kills: 0, isYou: false },
+  ],
+  resultLabel: "",
   matchActive: true,
 };
 
@@ -211,7 +220,7 @@ function GameInner() {
             <div style={{ marginBottom: 8 }}>
               <div style={{ ...styles.hudLabel, marginBottom: 6 }}>WINNER</div>
               <div style={{ fontFamily: "monospace", fontSize: 16, color: "#fff" }}>
-                {hud.playerKills > hud.enemyKills ? "PLAYER" : hud.enemyKills > hud.playerKills ? "ENEMY" : "DRAW"}
+                {hud.resultLabel || (hud.playerKills > hud.enemyKills ? "PLAYER" : hud.enemyKills > hud.playerKills ? "ENEMY" : "DRAW")}
               </div>
             </div>
             <button style={styles.startBtn} onClick={handleRestart}>
@@ -301,11 +310,15 @@ function GameInner() {
             <div style={{ color: "#fff", fontFamily: "monospace", fontWeight: 800 }}>{Math.max(0, Math.ceil(hud.matchTime))}s</div>
           </div>
 
-          {/* Top-right: Score */}
+          {/* Top-right: Scoreboard */}
           <div style={styles.scoreTopRight}>
-            <div style={{ ...styles.hudLabel, textAlign: "right" }}>SCORE</div>
-            <div style={{ color: "#fff", fontFamily: "monospace", fontWeight: 800 }}>
-              P: {hud.playerKills}  •  E: {hud.enemyKills}
+            <div style={{ ...styles.hudLabel, textAlign: "right" }}>SCOREBOARD</div>
+            <div style={{ display: "grid", gap: 4, textAlign: "right" }}>
+              {hud.scoreboard.map((entry) => (
+                <div key={entry.id} style={{ color: entry.isYou ? "#2ecc71" : "#fff", fontFamily: "monospace", fontWeight: 700, fontSize: 14 }}>
+                  {entry.name}: {entry.kills}
+                </div>
+              ))}
             </div>
           </div>
 
