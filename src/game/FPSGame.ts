@@ -168,6 +168,35 @@ const PLAYER_SPAWN_POINTS: Array<[number, number, number]> = [
 ];
 
 // ---------------------------------------------------------------------------
+// ★ ENEMY COMBAT & MOVEMENT SETTINGS — tune enemy AI behavior ★
+// ---------------------------------------------------------------------------
+// -- Distances (world units) --
+const ENEMY_COMBAT_MIN_DISTANCE      = 2.0;   // back away if closer than this
+const ENEMY_COMBAT_MAX_DISTANCE      = 12.0;  // move closer if farther than this
+const ENEMY_COMBAT_IDEAL_DISTANCE    = 6.0;   // try to strafe around this distance
+const ENEMY_SEPARATION_RADIUS        = 1.2;   // avoid standing inside each other at this distance
+const ENEMY_OBSTACLE_AVOID_DISTANCE  = 1.8;   // look ahead this far to detect walls/obstacles
+
+// -- Movement & stances --
+const ENEMY_MOVE_SPEED_WALK          = 2.0;   // base walk speed
+const ENEMY_MOVE_SPEED_SPRINT        = 3.5;   // sprint speed multiplier
+const ENEMY_MOVE_SPEED_CROUCH        = 1.2;   // crouch movement speed
+const ENEMY_SPRINT_CHANCE            = 0.15;  // 15% chance to initiate sprint when far from target
+const ENEMY_SPRINT_DURATION          = 2.5;   // seconds to maintain sprint
+const ENEMY_CROUCH_CHANCE            = 0.08;  // 8% chance to crouch during combat
+const ENEMY_CROUCH_DURATION          = 1.0;   // seconds to maintain crouch
+const ENEMY_CROUCH_HEIGHT_MULT       = 0.7;   // crouch shrinks body by this factor
+
+// -- Dodging & evasion --
+const ENEMY_DODGE_CHANCE             = 0.12;  // 12% chance to dodge each frame during combat
+const ENEMY_DODGE_DURATION           = 0.6;   // seconds per dodge burst
+const ENEMY_DODGE_SPEED_MULT         = 1.3;   // dodge is this much faster than normal move
+
+// -- Targeting & vision --
+const ENEMY_WANDER_TIMER_MIN         = 1.0;   // min seconds between direction changes while wandering
+const ENEMY_WANDER_TIMER_MAX         = 2.5;   // max seconds between direction changes while wandering
+
+// ---------------------------------------------------------------------------
 // Other game constants
 // ---------------------------------------------------------------------------
 const MOUSE_SENSITIVITY  = 0.002;
@@ -224,6 +253,13 @@ interface EnemyState {
   hitTimer: number;
   hitColor: THREE.Color;
   normalColor: THREE.Color;
+  // New combat AI fields
+  dodgeDir: THREE.Vector3;      // current dodge direction
+  dodgeTimer: number;            // countdown for active dodge
+  sprintTimer: number;           // countdown for active sprint
+  crouchTimer: number;           // countdown for active crouch
+  isCrouching: boolean;          // true if currently crouched
+  bodyHeightScale: number;       // visual scale for crouch (1.0 = standing, 0.7 = crouching)
 }
 
 function makeAABB(cx: number, cy: number, cz: number, sx: number, sy: number, sz: number): AABB {
@@ -801,6 +837,13 @@ export class FPSGame {
       hitTimer: 0,
       hitColor: new THREE.Color(0xffffff),
       normalColor: new THREE.Color(0xe74c3c),
+      // New combat AI fields
+      dodgeDir: new THREE.Vector3(),
+      dodgeTimer: 0,
+      sprintTimer: 0,
+      crouchTimer: 0,
+      isCrouching: false,
+      bodyHeightScale: 1.0,
     };
 
     return enemy;
@@ -1374,11 +1417,24 @@ export class FPSGame {
       this.updateEnemyFlash(enemy, dt);
       this.updateEnemyMuzzleFlash(enemy, dt);
       this.updateEnemyAABB(enemy);
+      
+      // Apply visual crouch effect
+      const body = enemy.mesh.children[0] as THREE.Mesh;
+      if (body) {
+        body.scale.y = enemy.bodyHeightScale;
+      }
     }
   }
 
   private updateEnemyAI(enemy: EnemyState, dt: number) {
+    // Dead or respawning enemies do nothing
+    if (!enemy.alive || enemy.dying) return;
+
     const position = enemy.mesh.position;
+
+    // ─────────────────────────────────────────────────────────────────
+    // 1. Find the closest visible target (player or enemy)
+    // ─────────────────────────────────────────────────────────────────
     const aliveTargets: Array<{ type: "player" | "enemy"; id: number | null; position: THREE.Vector3 }> = [];
     if (!this.playerDead && !this.playerDying && this.matchActive) {
       aliveTargets.push({ type: "player", id: null, position: this.playerPos.clone() });
@@ -1401,43 +1457,170 @@ export class FPSGame {
     enemy.targetType = chosenTarget?.type ?? null;
     enemy.targetId = chosenTarget?.id ?? null;
 
+    // ─────────────────────────────────────────────────────────────────
+    // 2. Update stance timers
+    // ─────────────────────────────────────────────────────────────────
+    if (enemy.sprintTimer > 0) {
+      enemy.sprintTimer = Math.max(0, enemy.sprintTimer - dt);
+    }
+    if (enemy.crouchTimer > 0) {
+      enemy.crouchTimer = Math.max(0, enemy.crouchTimer - dt);
+      enemy.isCrouching = true;
+      enemy.bodyHeightScale = ENEMY_CROUCH_HEIGHT_MULT;
+    } else {
+      enemy.isCrouching = false;
+      enemy.bodyHeightScale = 1.0;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 3. Update dodge timer
+    // ─────────────────────────────────────────────────────────────────
+    if (enemy.dodgeTimer > 0) {
+      enemy.dodgeTimer = Math.max(0, enemy.dodgeTimer - dt);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 4. Combat movement decision tree
+    // ─────────────────────────────────────────────────────────────────
     const desiredDir = new THREE.Vector3();
+
     if (chosenTarget) {
-      desiredDir.copy(chosenTarget.position).sub(position);
-      desiredDir.y = 0;
-      if (desiredDir.lengthSq() > 1e-4) {
-        desiredDir.normalize();
+      const distance = chosenTarget.distance;
+      const dirToTarget = chosenTarget.position.clone().sub(position);
+      dirToTarget.y = 0;
+      if (dirToTarget.lengthSq() > 1e-4) {
+        dirToTarget.normalize();
+      }
+
+      // Decide movement based on distance
+      if (distance > ENEMY_COMBAT_MAX_DISTANCE) {
+        // Too far: move closer and potentially sprint
+        desiredDir.copy(dirToTarget);
+        
+        // Initiate sprint occasionally when moving toward distant target
+        if (enemy.sprintTimer <= 0 && Math.random() < ENEMY_SPRINT_CHANCE) {
+          enemy.sprintTimer = ENEMY_SPRINT_DURATION;
+        }
+      } else if (distance < ENEMY_COMBAT_MIN_DISTANCE) {
+        // Too close: back away from target
+        desiredDir.copy(dirToTarget).multiplyScalar(-1);
+      } else {
+        // In combat range: strafe around the target
+        // Build a perpendicular vector (left/right relative to target)
+        const strafeLeft = new THREE.Vector3(dirToTarget.z, 0, -dirToTarget.x).normalize();
+        
+        // Occasionally dodge perpendicular to target during combat
+        if (enemy.dodgeTimer <= 0 && Math.random() < ENEMY_DODGE_CHANCE) {
+          const dodgeDirection = Math.random() > 0.5 ? 1 : -1;
+          enemy.dodgeDir.copy(strafeLeft).multiplyScalar(dodgeDirection);
+          enemy.dodgeTimer = ENEMY_DODGE_DURATION;
+        }
+
+        // Mix regular strafing with active dodge
+        if (enemy.dodgeTimer > 0) {
+          desiredDir.copy(enemy.dodgeDir);
+        } else {
+          // Gently prefer strafing left or right based on a simple sine wave
+          const strafePhase = (Math.sin(Date.now() * 0.001) > 0) ? 1 : -1;
+          desiredDir.copy(strafeLeft).multiplyScalar(strafePhase * 0.7);
+        }
+
+        // Occasionally crouch during combat for a tactical appearance
+        if (enemy.crouchTimer <= 0 && Math.random() < ENEMY_CROUCH_CHANCE) {
+          enemy.crouchTimer = ENEMY_CROUCH_DURATION;
+        }
       }
     } else {
+      // No target visible: wander with random direction changes
       enemy.moveTimer -= dt;
       if (enemy.moveTimer <= 0) {
         enemy.moveDir.set(Math.random() * 2 - 1, 0, Math.random() * 2 - 1).normalize();
-        enemy.moveTimer = 1.5 + Math.random() * 2.0;
+        enemy.moveTimer = ENEMY_WANDER_TIMER_MIN + Math.random() * (ENEMY_WANDER_TIMER_MAX - ENEMY_WANDER_TIMER_MIN);
       }
       desiredDir.copy(enemy.moveDir);
     }
 
-    // Avoid stacking by steering away from nearby enemies
-    const separation = new THREE.Vector3();
+    // ─────────────────────────────────────────────────────────────────
+    // 5. Add separation to avoid stacking into other enemies
+    // ─────────────────────────────────────────────────────────────────
     for (const other of this.enemies) {
       if (other.id === enemy.id || !other.alive || other.dying) continue;
       const delta = position.clone().sub(other.mesh.position);
       const dist = delta.length();
-      if (dist > 0 && dist < 1.5) {
-        separation.addScaledVector(delta.normalize(), (1.5 - dist) * 0.5);
+      if (dist > 0 && dist < ENEMY_SEPARATION_RADIUS) {
+        // Steer away from nearby enemies proportionally to proximity
+        const separationForce = (ENEMY_SEPARATION_RADIUS - dist) * 0.6 / Math.max(dist, 0.1);
+        desiredDir.addScaledVector(delta.normalize(), separationForce);
       }
     }
-    desiredDir.add(separation).normalize();
 
-    const nextPos = position.clone().addScaledVector(desiredDir, ENEMY_MOVE_SPEED * dt);
+    // ─────────────────────────────────────────────────────────────────
+    // 6. Detect and avoid obstacles ahead
+    // ─────────────────────────────────────────────────────────────────
+    if (desiredDir.lengthSq() > 1e-4) {
+      desiredDir.normalize();
+      const lookAheadPos = position.clone().addScaledVector(desiredDir, ENEMY_OBSTACLE_AVOID_DISTANCE);
+      
+      if (this.enemyCollides(lookAheadPos)) {
+        // Obstacle ahead: try strafing left or right instead
+        const perpLeft = new THREE.Vector3(desiredDir.z, 0, -desiredDir.x);
+        const leftPos = position.clone().addScaledVector(perpLeft, ENEMY_OBSTACLE_AVOID_DISTANCE);
+        const rightPos = position.clone().addScaledVector(perpLeft, -ENEMY_OBSTACLE_AVOID_DISTANCE);
+        
+        if (!this.enemyCollides(leftPos)) {
+          desiredDir.copy(perpLeft).normalize();
+        } else if (!this.enemyCollides(rightPos)) {
+          desiredDir.copy(perpLeft).multiplyScalar(-1).normalize();
+        } else {
+          // Blocked on all sides; try moving backward
+          desiredDir.multiplyScalar(-1);
+        }
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 7. Apply movement with current speed (accounting for stance and dodge)
+    // ─────────────────────────────────────────────────────────────────
+    let moveSpeed = ENEMY_MOVE_SPEED_WALK;
+    if (enemy.sprintTimer > 0) {
+      moveSpeed *= ENEMY_MOVE_SPEED_SPRINT;
+    } else if (enemy.isCrouching) {
+      moveSpeed = ENEMY_MOVE_SPEED_CROUCH;
+    }
+    if (enemy.dodgeTimer > 0) {
+      moveSpeed *= ENEMY_DODGE_SPEED_MULT;
+    }
+
+    const nextPos = position.clone().addScaledVector(desiredDir, moveSpeed * dt);
     if (!this.enemyCollides(nextPos)) {
       enemy.mesh.position.copy(nextPos);
     } else {
+      // If movement blocked, change direction on next frame
       enemy.moveDir.set(Math.random() * 2 - 1, 0, Math.random() * 2 - 1).normalize();
     }
 
-    enemy.mesh.lookAt(position.x + desiredDir.x, position.y, position.z + desiredDir.z);
+    // ─────────────────────────────────────────────────────────────────
+    // 8. Look at target if one exists, otherwise look in movement direction
+    // ─────────────────────────────────────────────────────────────────
+    if (chosenTarget) {
+      enemy.mesh.lookAt(
+        chosenTarget.position.x,
+        position.y,
+        chosenTarget.position.z
+      );
+    } else {
+      if (desiredDir.lengthSq() > 1e-4) {
+        enemy.mesh.lookAt(
+          position.x + desiredDir.x,
+          position.y,
+          position.z + desiredDir.z
+        );
+      }
+    }
 
+    // ─────────────────────────────────────────────────────────────────
+    // 9. Shooting behavior (unchanged: still only shoot visible targets)
+    // ─────────────────────────────────────────────────────────────────
     enemy.shootTimer -= dt;
     if (chosenTarget && enemy.shootTimer <= 0) {
       enemy.shootTimer = ENEMY_FIRE_RATE + Math.random() * 0.8;
@@ -1590,6 +1773,12 @@ export class FPSGame {
     enemy.targetId = null;
     enemy.healthBarFore.scale.x = 1;
     (enemy.healthBarFore.position as THREE.Vector3).x = 0;
+    // Reset combat state
+    enemy.dodgeTimer = 0;
+    enemy.sprintTimer = 0;
+    enemy.crouchTimer = 0;
+    enemy.isCrouching = false;
+    enemy.bodyHeightScale = 1.0;
     this.updateEnemyAABB(enemy);
   }
 
@@ -1998,6 +2187,13 @@ export class FPSGame {
       enemy.moveDir.set(Math.random() * 2 - 1, 0, Math.random() * 2 - 1).normalize();
       enemy.healthBarFore.scale.x = 1;
       (enemy.healthBarFore.position as THREE.Vector3).x = 0;
+      // Reset combat state
+      enemy.dodgeTimer = 0;
+      enemy.sprintTimer = 0;
+      enemy.crouchTimer = 0;
+      enemy.isCrouching = false;
+      enemy.bodyHeightScale = 1.0;
+    }
       this.updateEnemyAABB(enemy);
     }
     this.fireTimer = 0;
