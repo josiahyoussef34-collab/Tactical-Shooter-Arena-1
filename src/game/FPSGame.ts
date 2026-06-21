@@ -152,19 +152,24 @@ const ENEMY_FIRE_RATE               = 1.2;   // seconds per shot from enemies (l
 const ENEMY_ACCURACY                = 0.72;  // 0..1 where 1 is perfect accuracy
 const ENEMY_TRACER_DURATION         = 0.14;  // seconds enemy tracer remains visible
 const ENEMY_SPAWN_POINTS: Array<[number, number, number]> = [
-  [-12, 0.9, -12],
-  [12, 0.9, -12],
-  [-12, 0.9, 12],
-  [12, 0.9, 12],
-  [0, 0.9, 0],
+  // Back area (primary spawn zone)
+  [0, 0.9, -14],    // center back
+  [-5, 0.9, -14],   // left back
+  [5, 0.9, -14],    // right back
+  // Corner checkpoints (fallback spawns)
+  [-16, 0.9, -6],   // southwest corner
+  [16, 0.9, -6],    // southeast corner
 ];
 
 const PLAYER_SPAWN_POINTS: Array<[number, number, number]> = [
-  [0, STAND_HEIGHT, 12],
-  [6, STAND_HEIGHT, 10],
-  [-6, STAND_HEIGHT, 10],
-  [8, STAND_HEIGHT, 8],
-  [-8, STAND_HEIGHT, 8],
+  // Central yard (primary spawn)
+  [0, STAND_HEIGHT, 8],
+  // Central yard variations
+  [-5, STAND_HEIGHT, 6],
+  [5, STAND_HEIGHT, 6],
+  // Corner checkpoints
+  [-16, STAND_HEIGHT, 8],   // northwest
+  [16, STAND_HEIGHT, 8],    // northeast
 ];
 
 // ---------------------------------------------------------------------------
@@ -195,6 +200,11 @@ const ENEMY_DODGE_SPEED_MULT         = 1.3;   // dodge is this much faster than 
 // -- Targeting & vision --
 const ENEMY_WANDER_TIMER_MIN         = 1.0;   // min seconds between direction changes while wandering
 const ENEMY_WANDER_TIMER_MAX         = 2.5;   // max seconds between direction changes while wandering
+const ENEMY_SPAWN_CHECK_ANGLES        = 10;    // directions to test when validating a spawn point
+const ENEMY_SPAWN_OFFSET_RADIUS       = 1.2;   // maximum distance to nudge a spawn point to a nearby clear space
+const ENEMY_STUCK_DISTANCE           = 0.12;  // if an enemy barely moves over this distance, it may be stuck
+const ENEMY_STUCK_TIME_THRESHOLD     = 1.0;   // seconds of low movement before attempting to unstuck
+const ENEMY_UNSTUCK_NUDGE_DISTANCE   = 1.2;   // how far to move a stuck enemy while trying to free it
 
 // ---------------------------------------------------------------------------
 // Other game constants
@@ -260,6 +270,9 @@ interface EnemyState {
   crouchTimer: number;           // countdown for active crouch
   isCrouching: boolean;          // true if currently crouched
   bodyHeightScale: number;       // visual scale for crouch (1.0 = standing, 0.7 = crouching)
+  // Stuck detection
+  lastMovePos: THREE.Vector3;
+  stuckTimer: number;
 }
 
 function makeAABB(cx: number, cy: number, cz: number, sx: number, sy: number, sz: number): AABB {
@@ -685,55 +698,112 @@ export class FPSGame {
       }
     };
 
-    // --- Floor (no collision — player stays at fixed Y) ---
-    addBox(0, 0, 0, 40, 0.2, 40, 0x2d5a27, false);
+    // ─────────────────────────────────────────────────────────────────
+    // FLOOR & CEILING
+    // ─────────────────────────────────────────────────────────────────
+    addBox(0, 0, 0, 50, 0.2, 50, 0x2d5a27, false); // floor (no collision)
+    addBox(0, 4.5, 0, 50, 0.2, 50, 0x1a1a2e, false); // ceiling (no collision)
 
-    // --- Ceiling ---
-    addBox(0, 4.5, 0, 40, 0.2, 40, 0x1a1a2e, false);
+    // ─────────────────────────────────────────────────────────────────
+    // OUTER BOUNDARY WALLS
+    // ─────────────────────────────────────────────────────────────────
+    // North wall
+    addBox(0, 2.25, -25, 50, 4.5, 0.6, 0x3d3d3d);
+    // South wall
+    addBox(0, 2.25, 25, 50, 4.5, 0.6, 0x3d3d3d);
+    // East wall
+    addBox(25, 2.25, 0, 0.6, 4.5, 50, 0x3d3d3d);
+    // West wall
+    addBox(-25, 2.25, 0, 0.6, 4.5, 50, 0x3d3d3d);
 
-    // --- Outer walls (N, S, E, W) ---
-    // North (+Z side)
-    addBox(0, 2.25, -20, 40, 4.5, 0.5, 0x3d3d3d);
-    // South
-    addBox(0, 2.25,  20, 40, 4.5, 0.5, 0x3d3d3d);
-    // East (+X side)
-    addBox( 20, 2.25, 0, 0.5, 4.5, 40, 0x3d3d3d);
-    // West
-    addBox(-20, 2.25, 0, 0.5, 4.5, 40, 0x3d3d3d);
+    // ─────────────────────────────────────────────────────────────────
+    // CENTRAL COMBAT YARD (main arena, center of map)
+    // Area: roughly X=-8..8, Z=-4..12
+    // ─────────────────────────────────────────────────────────────────
+    // Medium cover blocks in the yard (varied heights for tactics)
+    addBox(-6, 0.5, 2, 2, 1.0, 2, 0x8b4513);   // low crate, left side
+    addBox(6, 0.5, 2, 2, 1.0, 2, 0x8b4513);    // low crate, right side
+    addBox(0, 0.75, 4, 1.5, 1.5, 1.5, 0x8b4513); // medium crate, center
+    addBox(-4, 0.5, 0, 1, 1.0, 1, 0x6b5d4f);   // short barrier, center-left
+    addBox(4, 0.5, 0, 1, 1.0, 1, 0x6b5d4f);    // short barrier, center-right
+    addBox(0, 0.6, -2, 2, 1.2, 2, 0x9b5a3a);  // tall-ish cover, center back
+    addBox(-3, 0.4, 6, 1.2, 0.8, 2.5, 0x777777); // low wall, left rear
+    addBox(3, 0.4, 6, 1.2, 0.8, 2.5, 0x777777);  // low wall, right rear
 
-    // --- Interior wall dividing the map into two halves ---
-    // Left segment
-    addBox(-8, 2.25, 0, 12, 4.5, 0.5, 0x555555);
-    // Right segment (gap in the middle for passage)
-    addBox( 9, 2.25, 0, 10, 4.5, 0.5, 0x555555);
+    // ─────────────────────────────────────────────────────────────────
+    // LEFT SIDE: INDOOR TACTICAL ROOM
+    // Access via narrow corridor from central yard
+    // Area: roughly X=-14..-8, Z=1..9
+    // ─────────────────────────────────────────────────────────────────
+    // Corridor connecting center to indoor room (narrow passage)
+    addBox(-11, 2.25, 6, 5, 4.5, 0.8, 0x555555);  // corridor walls (top/bottom blocked)
+    addBox(-14, 2.25, 4, 0.8, 4.5, 4, 0x555555);  // left wall of corridor junction
+    
+    // Indoor room perimeter walls
+    addBox(-18.5, 2.25, 5, 0.6, 4.5, 8, 0x444444); // west wall
+    addBox(-18.5, 2.25, 1, 8, 4.5, 0.6, 0x444444); // north wall
+    addBox(-18.5, 2.25, 9, 8, 4.5, 0.6, 0x444444); // south wall
+    
+    // Indoor room interior cover (tall tactical pieces for close combat)
+    addBox(-18, 1.0, 5, 1.5, 2.0, 1.5, 0x6b4423);  // tall cover piece
+    addBox(-16, 0.8, 4.5, 2, 1.6, 2, 0x704c2c);    // medium tall cover
+    addBox(-15, 0.5, 6, 1.5, 1.0, 1.5, 0x8b5a3a);  // short crate
 
-    // --- Cover blocks in player spawn area ---
-    addBox(-4, 0.75, 8,  2, 1.5, 1, 0x8b4513); // left crate
-    addBox( 4, 0.75, 8,  2, 1.5, 1, 0x8b4513); // right crate
-    addBox( 0, 0.75, 6,  1, 1.5, 3, 0x8b4513); // centre crate
+    // ─────────────────────────────────────────────────────────────────
+    // RIGHT SIDE: OUTDOOR LANE (longer sightline)
+    // Access directly from central yard
+    // Area: roughly X=8..18, Z=1..8
+    // ─────────────────────────────────────────────────────────────────
+    // Right lane side walls (keep it open for sightline)
+    addBox(22.5, 2.25, 4.5, 0.8, 4.5, 7, 0x555555); // east wall
+    addBox(8, 2.25, 1, 14, 4.5, 0.6, 0x555555);     // north wall
+    addBox(8, 2.25, 8, 14, 4.5, 0.6, 0x555555);     // south wall
 
-    // --- Cover blocks in enemy area ---
-    addBox(-5, 0.75, -8, 2, 1.5, 1, 0x6b6b6b);
-    addBox( 5, 0.75, -8, 2, 1.5, 1, 0x6b6b6b);
-    addBox( 0, 0.75,-10, 3, 1.5, 1, 0x6b6b6b);
+    // Outdoor lane cover (placed strategically for medium sightline)
+    addBox(10, 0.5, 4.5, 2, 1.0, 2, 0x6b6b6b);     // barrier near entrance
+    addBox(15, 0.6, 3.5, 1.5, 1.2, 2, 0x666666);   // cover mid-lane left
+    addBox(15, 0.6, 5.5, 1.5, 1.2, 2, 0x666666);   // cover mid-lane right
+    addBox(20, 0.5, 4.5, 2, 1.0, 2, 0x707070);     // far-end cover
 
-    // --- Low barriers along the central corridor ---
-    addBox(-14, 0.5, -5, 4, 1, 0.5, 0x888888);
-    addBox(-14, 0.5,  5, 4, 1, 0.5, 0x888888);
-    addBox( 14, 0.5, -5, 4, 1, 0.5, 0x888888);
-    addBox( 14, 0.5,  5, 4, 1, 0.5, 0x888888);
+    // ─────────────────────────────────────────────────────────────────
+    // BACK AREA: ENEMY SPAWN ZONE
+    // Area: roughly X=-8..8, Z=-16..-8
+    // ─────────────────────────────────────────────────────────────────
+    // Back wall
+    addBox(0, 2.25, -20, 16, 4.5, 0.6, 0x555555);
+    
+    // Enemy spawn cover (partial, so they can spread out)
+    addBox(-6, 0.5, -14, 2, 1.0, 2, 0x5a5a5a);    // left spawn cover
+    addBox(6, 0.5, -14, 2, 1.0, 2, 0x5a5a5a);     // right spawn cover
+    addBox(0, 0.6, -12, 2.5, 1.2, 2.5, 0x666666); // center spawn cover
+    addBox(-4, 0.4, -17, 1.5, 0.8, 1.5, 0x4a4a4a); // barrier
+    addBox(4, 0.4, -17, 1.5, 0.8, 1.5, 0x4a4a4a);  // barrier
 
-    // --- Decorative pillars at the four quadrant corners ---
-    addBox(-10, 2.25, -10, 1, 4.5, 1, 0x4a4a4a);
-    addBox( 10, 2.25, -10, 1, 4.5, 1, 0x4a4a4a);
-    addBox(-10, 2.25,  10, 1, 4.5, 1, 0x4a4a4a);
-    addBox( 10, 2.25,  10, 1, 4.5, 1, 0x4a4a4a);
+    // ─────────────────────────────────────────────────────────────────
+    // CORNER AREAS: SPAWN/RESPAWN CHECKPOINTS
+    // ─────────────────────────────────────────────────────────────────
+    // Northeast corner
+    addBox(18, 0.5, 8, 2, 1.0, 2, 0x555555);       // NE checkpoint cover
+    // Northwest corner
+    addBox(-18, 0.5, 8, 2, 1.0, 2, 0x555555);      // NW checkpoint cover
+    // Southeast corner
+    addBox(18, 0.5, -8, 2, 1.0, 2, 0x555555);      // SE checkpoint cover
+    // Southwest corner
+    addBox(-18, 0.5, -8, 2, 1.0, 2, 0x555555);     // SW checkpoint cover
 
-    // --- Floor grid lines for orientation (not solid) ---
-    // Grid lines help the player judge distances
-    for (let i = -18; i <= 18; i += 4) {
-      addBox(i, 0.12, 0, 0.1, 0.05, 36, 0x3a3a3a, false);
-      addBox(0, 0.12, i, 36, 0.05, 0.1, 0x3a3a3a, false);
+    // ─────────────────────────────────────────────────────────────────
+    // CONNECTING PASSAGES & LAYOUT AIDS
+    // ─────────────────────────────────────────────────────────────────
+    // Low barriers to guide movement flow
+    addBox(-12, 0.5, -5, 1.5, 1.0, 0.6, 0x888888); // guide to left corridor
+    addBox(12, 0.5, -5, 1.5, 1.0, 0.6, 0x888888);  // guide to right lane
+
+    // ─────────────────────────────────────────────────────────────────
+    // FLOOR GRID LINES (orientation helper, non-solid)
+    // ─────────────────────────────────────────────────────────────────
+    for (let i = -24; i <= 24; i += 4) {
+      addBox(i, 0.12, 0, 0.1, 0.05, 50, 0x3a3a3a, false);
+      addBox(0, 0.12, i, 50, 0.05, 0.1, 0x3a3a3a, false);
     }
   }
 
@@ -742,11 +812,56 @@ export class FPSGame {
   // -----------------------------------------------------------------------
   private buildEnemies() {
     for (let i = 0; i < ENEMY_COUNT; i += 1) {
-      const spawn = ENEMY_SPAWN_POINTS[i % ENEMY_SPAWN_POINTS.length];
-      const enemy = this.createEnemy(i, new THREE.Vector3(spawn[0], spawn[1], spawn[2]));
+      const spawn = this.findValidSpawnPoint(i);
+      const enemy = this.createEnemy(i, spawn.clone());
       this.enemies.push(enemy);
       this.scene.add(enemy.mesh);
     }
+  }
+
+  private findValidSpawnPoint(enemyIndex: number): THREE.Vector3 {
+    const baseSpawns = [...ENEMY_SPAWN_POINTS];
+    for (let attempt = 0; attempt < baseSpawns.length; attempt += 1) {
+      const idx = (enemyIndex + attempt) % baseSpawns.length;
+      const candidate = new THREE.Vector3(...baseSpawns[idx]);
+      if (!this.enemyCollides(candidate) && !this.enemyOverlapsOtherSpawns(candidate)) {
+        return candidate;
+      }
+    }
+    // Try nearby offsets if the direct spawn is blocked
+    const offsets = [
+      new THREE.Vector3(1.2, 0, 0),
+      new THREE.Vector3(-1.2, 0, 0),
+      new THREE.Vector3(0, 0, 1.2),
+      new THREE.Vector3(0, 0, -1.2),
+      new THREE.Vector3(0.9, 0, 0.9),
+      new THREE.Vector3(-0.9, 0, 0.9),
+      new THREE.Vector3(0.9, 0, -0.9),
+      new THREE.Vector3(-0.9, 0, -0.9),
+    ];
+    for (const base of baseSpawns) {
+      const basePos = new THREE.Vector3(...base);
+      for (const offset of offsets) {
+        const candidate = basePos.clone().add(offset);
+        if (!this.enemyCollides(candidate) && !this.enemyOverlapsOtherSpawns(candidate)) {
+          return candidate;
+        }
+      }
+    }
+    // Fallback: return the first defined spawn point and hope for the best
+    return new THREE.Vector3(...ENEMY_SPAWN_POINTS[enemyIndex % ENEMY_SPAWN_POINTS.length]);
+  }
+
+  private enemyOverlapsOtherSpawns(candidate: THREE.Vector3): boolean {
+    const candidateBox = makeAABB(candidate.x, candidate.y, candidate.z, 0.8, 1.8, 0.5);
+    for (const other of this.enemies) {
+      if (!other.alive && !other.dying) continue;
+      const otherBox = makeAABB(other.mesh.position.x, other.mesh.position.y, other.mesh.position.z, 0.8, 1.8, 0.5);
+      if (!(candidateBox.minX > otherBox.maxX || candidateBox.maxX < otherBox.minX || candidateBox.minY > otherBox.maxY || candidateBox.maxY < otherBox.minY || candidateBox.minZ > otherBox.maxZ || candidateBox.maxZ < otherBox.minZ)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private createEnemy(id: number, position: THREE.Vector3): EnemyState {
@@ -844,6 +959,8 @@ export class FPSGame {
       crouchTimer: 0,
       isCrouching: false,
       bodyHeightScale: 1.0,
+      lastMovePos: position.clone(),
+      stuckTimer: 0,
     };
 
     return enemy;
@@ -1600,6 +1717,43 @@ export class FPSGame {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // 7.5 Unstuck fallback: detect if the enemy is barely moving
+    // ─────────────────────────────────────────────────────────────────
+    const movementDelta = enemy.mesh.position.distanceTo(enemy.lastMovePos);
+    if (movementDelta < ENEMY_STUCK_DISTANCE) {
+      enemy.stuckTimer += dt;
+    } else {
+      enemy.stuckTimer = 0;
+    }
+
+    if (enemy.stuckTimer >= ENEMY_STUCK_TIME_THRESHOLD) {
+      // Nudge away from nearby obstacles and reposition if needed
+      const awayDir = new THREE.Vector3();
+      for (const obs of this.obstacles) {
+        const delta = enemy.mesh.position.clone().sub(new THREE.Vector3((obs.minX + obs.maxX) / 2, enemy.mesh.position.y, (obs.minZ + obs.maxZ) / 2));
+        const dist = delta.length();
+        if (dist > 0 && dist < ENEMY_UNSTUCK_NUDGE_DISTANCE * 1.5) {
+          awayDir.addScaledVector(delta.normalize(), (ENEMY_UNSTUCK_NUDGE_DISTANCE * 1.5 - dist));
+        }
+      }
+      if (awayDir.lengthSq() > 1e-4) {
+        awayDir.normalize();
+        const unstuckPos = enemy.mesh.position.clone().addScaledVector(awayDir, ENEMY_UNSTUCK_NUDGE_DISTANCE * 0.5);
+        if (!this.enemyCollides(unstuckPos)) {
+          enemy.mesh.position.copy(unstuckPos);
+        }
+      }
+
+      enemy.stuckTimer = 0;
+      if (this.enemyCollides(enemy.mesh.position)) {
+        const respawn = this.findValidSpawnPoint(enemy.id);
+        enemy.mesh.position.copy(respawn);
+      }
+    }
+
+    enemy.lastMovePos.copy(enemy.mesh.position);
+
+    // ─────────────────────────────────────────────────────────────────
     // 8. Look at target if one exists, otherwise look in movement direction
     // ─────────────────────────────────────────────────────────────────
     if (chosenTarget) {
@@ -1753,14 +1907,14 @@ export class FPSGame {
   }
 
   private respawnEnemy(enemy: EnemyState) {
-    const spawn = ENEMY_SPAWN_POINTS[Math.floor(Math.random() * ENEMY_SPAWN_POINTS.length)];
+    const spawn = this.findValidSpawnPoint(enemy.id);
     enemy.health = ENEMY_HEALTH;
     enemy.alive = true;
     enemy.dying = false;
     enemy.deathTimer = 0;
     enemy.respawnTimer = 0;
     enemy.mesh.visible = true;
-    enemy.mesh.position.set(spawn[0], spawn[1], spawn[2]);
+    enemy.mesh.position.copy(spawn);
     enemy.mesh.rotation.set(0, 0, 0);
     enemy.normalColor.set(0xe74c3c);
     (enemy.mesh.children[0] as THREE.Mesh).material = new THREE.MeshLambertMaterial({ color: 0xe74c3c });
@@ -1779,6 +1933,8 @@ export class FPSGame {
     enemy.crouchTimer = 0;
     enemy.isCrouching = false;
     enemy.bodyHeightScale = 1.0;
+    enemy.lastMovePos = enemy.mesh.position.clone();
+    enemy.stuckTimer = 0;
     this.updateEnemyAABB(enemy);
   }
 
@@ -2193,7 +2349,6 @@ export class FPSGame {
       enemy.crouchTimer = 0;
       enemy.isCrouching = false;
       enemy.bodyHeightScale = 1.0;
-    }
       this.updateEnemyAABB(enemy);
     }
     this.fireTimer = 0;
