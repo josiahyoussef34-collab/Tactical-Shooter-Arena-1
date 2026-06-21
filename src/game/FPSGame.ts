@@ -705,7 +705,199 @@ export class FPSGame {
     // ─────────────────────────────────────────────────────────────────
     // FLOOR & CEILING
     // ─────────────────────────────────────────────────────────────────
-    addBox(0, 0, 0, 50, 0.2, 50, 0x2d5a27, false); // floor (no collision)
+    const createFloorTexture = () => {
+      const size = 512;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+
+      // Base concrete tone with subtle hue shift
+      ctx.fillStyle = "#6f7478";
+      ctx.fillRect(0, 0, size, size);
+
+      const drawNoise = (intensity: number) => {
+        const imageData = ctx.getImageData(0, 0, size, size);
+        for (let i = 0; i < imageData.data.length; i += 4) {
+          const noise = (Math.random() - 0.5) * intensity;
+          imageData.data[i] = Math.min(255, Math.max(0, imageData.data[i] + noise));
+          imageData.data[i + 1] = Math.min(255, Math.max(0, imageData.data[i + 1] + noise * 0.75));
+          imageData.data[i + 2] = Math.min(255, Math.max(0, imageData.data[i + 2] + noise * 0.8));
+        }
+        ctx.putImageData(imageData, 0, 0);
+      };
+
+      const drawPatch = (x: number, y: number, w: number, h: number, color: string, alpha: number) => {
+        ctx.save();
+        ctx.fillStyle = color;
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        ctx.ellipse(x, y, w, h, (Math.random() - 0.5) * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      };
+
+      const drawPanelSeams = () => {
+        ctx.strokeStyle = "rgba(0,0,0,0.18)";
+        ctx.lineWidth = 2;
+        ctx.shadowColor = "rgba(0,0,0,0.1)";
+        ctx.shadowBlur = 1;
+        const spacing = size / 4;
+        for (let i = 1; i < 4; i += 1) {
+          const offset = i * spacing + (Math.random() - 0.5) * 10;
+          ctx.beginPath();
+          ctx.moveTo(offset, 0);
+          ctx.lineTo(offset, size);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(0, offset);
+          ctx.lineTo(size, offset);
+          ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+      };
+
+      const drawCracks = () => {
+        for (let i = 0; i < 5; i += 1) {
+          let x = Math.random() * size;
+          let y = Math.random() * size;
+          const steps = 8 + Math.floor(Math.random() * 4);
+          ctx.strokeStyle = "rgba(15,15,15,0.3)";
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          for (let j = 0; j < steps; j += 1) {
+            x += (Math.random() - 0.5) * 80;
+            y += (Math.random() - 0.5) * 80;
+            ctx.lineTo(x, y);
+            if (Math.random() < 0.25) {
+              ctx.moveTo(x, y);
+            }
+          }
+          ctx.stroke();
+          ctx.strokeStyle = "rgba(255,255,255,0.07)";
+          ctx.lineWidth = 0.4;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          for (let j = 0; j < steps; j += 1) {
+            x += (Math.random() - 0.5) * 80;
+            y += (Math.random() - 0.5) * 80;
+            ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+      };
+
+      const drawStains = () => {
+        for (let i = 0; i < 8; i += 1) {
+          const x = Math.random() * size;
+          const y = Math.random() * size;
+          const w = 40 + Math.random() * 90;
+          const h = 20 + Math.random() * 70;
+          const dark = Math.random() > 0.45;
+          const alpha = 0.08 + Math.random() * 0.15;
+          drawPatch(x, y, w, h, dark ? "#272a2d" : "#9f9f99", alpha);
+        }
+      };
+
+      const drawEdgeWear = () => {
+        ctx.save();
+        ctx.strokeStyle = "rgba(20,20,20,0.18)";
+        ctx.lineWidth = 3;
+        ctx.shadowColor = "rgba(0,0,0,0.12)";
+        ctx.shadowBlur = 4;
+        ctx.beginPath();
+        ctx.moveTo(8, 6);
+        ctx.lineTo(size - 8, 6);
+        ctx.moveTo(8, size - 6);
+        ctx.lineTo(size - 8, size - 6);
+        ctx.moveTo(6, 8);
+        ctx.lineTo(6, size - 8);
+        ctx.moveTo(size - 6, 8);
+        ctx.lineTo(size - 6, size - 8);
+        ctx.stroke();
+        ctx.restore();
+      };
+
+      // Floor details
+      for (let i = 0; i < 40; i += 1) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const w = 20 + Math.random() * 100;
+        const h = 10 + Math.random() * 70;
+        const alpha = 0.03 + Math.random() * 0.08;
+        drawPatch(x, y, w, h, `rgba(95, 98, 102, ${alpha})`, 1);
+      }
+
+      drawPanelSeams();
+      drawStains();
+      drawCracks();
+      drawEdgeWear();
+      drawNoise(18);
+
+      // Add light surface scratches and grain
+      for (let i = 0; i < 2200; i += 1) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const length = 6 + Math.random() * 12;
+        const angle = (Math.random() - 0.5) * 0.5;
+        ctx.strokeStyle = `rgba(255,255,255,${0.02 + Math.random() * 0.05})`;
+        ctx.lineWidth = 0.4;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + Math.cos(angle) * length, y + Math.sin(angle) * length);
+        ctx.stroke();
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(4, 4);
+      tex.anisotropy = 1;
+      return tex;
+    };
+
+    const createFloorRoughnessTexture = () => {
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+
+      const imageData = ctx.createImageData(size, size);
+      for (let i = 0; i < imageData.data.length; i += 4) {
+        const value = 190 + (Math.random() - 0.5) * 70;
+        imageData.data[i] = value;
+        imageData.data[i + 1] = value;
+        imageData.data[i + 2] = value;
+        imageData.data[i + 3] = 255;
+      }
+      ctx.putImageData(imageData, 0, 0);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(4, 4);
+      tex.anisotropy = 1;
+      return tex;
+    };
+
+    const floorTexture = createFloorTexture();
+    const roughnessTexture = createFloorRoughnessTexture();
+    const floorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x7d8287,
+      map: floorTexture ?? undefined,
+      roughnessMap: roughnessTexture ?? undefined,
+      roughness: 0.82,
+      metalness: 0.05,
+      envMapIntensity: 0.65,
+    });
+    const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(50, 0.2, 50), floorMaterial);
+    floorMesh.position.set(0, 0, 0);
+    this.scene.add(floorMesh);
     addBox(0, 4.5, 0, 50, 0.2, 50, 0x1a1a2e, false); // ceiling (no collision)
 
     // ─────────────────────────────────────────────────────────────────
