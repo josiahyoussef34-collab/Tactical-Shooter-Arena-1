@@ -78,7 +78,6 @@ const PRONE_SPEED  = 1.8;     // 30% of walk speed — prone movement
 const PRONE_HOLD_TIME = 0.75; // seconds to hold C to toggle prone (instead of crouch)
 
 // -- Jump & gravity --
-const JUMP_STRENGTH = 7;   // upward velocity applied the instant Space is pressed
 const GRAVITY       = 22;  // downward pull each second² (higher = snappier landing)
 
 // -- Acceleration & friction --
@@ -100,6 +99,11 @@ const STAND_HEIGHT  = 1.7;  // eye height above floor when standing
 const CROUCH_HEIGHT = 1.0;  // eye height above floor when crouching
 const PRONE_HEIGHT  = 0.35; // eye height above floor when prone (very low)
 const PLAYER_RADIUS = 0.4;  // horizontal collision radius
+const PLAYER_HEIGHT = STAND_HEIGHT; // eye height when standing
+const MAX_STEP_HEIGHT = 0.6; // how high the player can stand up onto a low block
+const TOP_SURFACE_TOLERANCE = 0.15; // allow slight height variance when standing on block tops
+const JUMP_FORCE = 7;   // upward velocity applied when Space is pressed
+const MAX_FALL_SPEED = 40; // limit fall velocity for stability
 
 // Match / respawn settings
 const MATCH_LENGTH_SECONDS = 120; // match duration in seconds
@@ -1121,13 +1125,13 @@ export class FPSGame {
     // ── 6. Jump ─────────────────────────────────────────────────────────
     // Only allowed when feet are on the floor and not crouched/prone
     if (this.keys["Space"] && this.isGrounded && this.stance === "standing") {
-      this.velocityY = JUMP_STRENGTH;
+      this.velocityY = JUMP_FORCE;
       this.isGrounded = false;
     }
 
     // ── 7. Gravity ──────────────────────────────────────────────────────
     if (!this.isGrounded) {
-      this.velocityY -= GRAVITY * dt;
+      this.velocityY = Math.max(this.velocityY - GRAVITY * dt, -MAX_FALL_SPEED);
     }
 
     // ── 8. Smooth eye height (stance transition) ───────────────────────
@@ -1160,20 +1164,28 @@ export class FPSGame {
     }
 
     // Vertical Y (gravity + jump)
-    const nextY = this.playerPos.clone();
-    nextY.y += this.velocityY * dt;
+    const nextY = this.playerPos.y + this.velocityY * dt;
 
-    // Floor: the minimum eye position is eyeHeight above the ground (y=0)
+    // Floor and obstacle landing support
     const floorEyeY = this.eyeHeight;
+    const landingY = this.findLandingSurfaceY(this.playerPos, nextY, this.eyeHeight);
+    const ceilingY = this.findCeilingSurfaceY(this.playerPos, nextY, this.eyeHeight);
 
-    if (nextY.y <= floorEyeY) {
-      // Landed — snap to floor, stop falling, mark as grounded
+    if (ceilingY !== null && nextY > ceilingY) {
+      this.playerPos.y = ceilingY;
+      this.velocityY = 0;
+      this.isGrounded = false;
+    } else if (landingY !== null) {
+      this.playerPos.y = landingY;
+      this.velocityY = 0;
+      this.isGrounded = true;
+    } else if (nextY <= floorEyeY) {
       this.playerPos.y = floorEyeY;
-      this.velocityY   = 0;
-      this.isGrounded  = true;
+      this.velocityY = 0;
+      this.isGrounded = true;
     } else {
-      this.playerPos.y = nextY.y;
-      this.isGrounded  = false;
+      this.playerPos.y = nextY;
+      this.isGrounded = false;
     }
 
     // ── 8. Update camera ─────────────────────────────────────────────────
@@ -1316,22 +1328,66 @@ export class FPSGame {
   // -----------------------------------------------------------------------
   private collidesWithObstacles(pos: THREE.Vector3, eyeH: number): boolean {
     const r = PLAYER_RADIUS;
-    const bottom = pos.y - eyeH; // feet level
-    const top    = pos.y + 0.1;  // small clearance above the eyes
+    const headClearance = 0.1;
+    const playerBox = makeAABB(
+      pos.x,
+      pos.y - eyeH / 2 + headClearance / 2,
+      pos.z,
+      r * 2,
+      eyeH + headClearance,
+      r * 2
+    );
 
     for (const obs of this.obstacles) {
-      // Skip if there is no vertical overlap
-      if (top < obs.minY || bottom > obs.maxY) continue;
-
-      // Horizontal overlap (approximate cylinder as a square for simplicity)
-      if (
-        pos.x + r > obs.minX && pos.x - r < obs.maxX &&
-        pos.z + r > obs.minZ && pos.z - r < obs.maxZ
-      ) {
-        return true;
-      }
+      if (this.isStandingOnTopOf(obs, pos, eyeH)) continue;
+      if (playerBox.minY >= obs.maxY || playerBox.maxY <= obs.minY) continue;
+      if (playerBox.minX >= obs.maxX || playerBox.maxX <= obs.minX) continue;
+      if (playerBox.minZ >= obs.maxZ || playerBox.maxZ <= obs.minZ) continue;
+      return true;
     }
     return false;
+  }
+
+  private isStandingOnTopOf(obs: AABB, pos: THREE.Vector3, eyeH: number): boolean {
+    const bottom = pos.y - eyeH;
+    if (bottom < obs.maxY - TOP_SURFACE_TOLERANCE || bottom > obs.maxY + TOP_SURFACE_TOLERANCE) return false;
+    if (pos.x + PLAYER_RADIUS <= obs.minX || pos.x - PLAYER_RADIUS >= obs.maxX) return false;
+    if (pos.z + PLAYER_RADIUS <= obs.minZ || pos.z - PLAYER_RADIUS >= obs.maxZ) return false;
+    return true;
+  }
+
+  private findLandingSurfaceY(currentPos: THREE.Vector3, nextY: number, eyeH: number): number | null {
+    if (nextY > currentPos.y) return null;
+    const nextBottom = nextY - eyeH;
+    const currentBottom = currentPos.y - eyeH;
+    let bestTop = -Infinity;
+
+    for (const obs of this.obstacles) {
+      if (currentPos.x + PLAYER_RADIUS <= obs.minX || currentPos.x - PLAYER_RADIUS >= obs.maxX) continue;
+      if (currentPos.z + PLAYER_RADIUS <= obs.minZ || currentPos.z - PLAYER_RADIUS >= obs.maxZ) continue;
+      if (obs.maxY <= currentBottom + MAX_STEP_HEIGHT && obs.maxY >= nextBottom - TOP_SURFACE_TOLERANCE) {
+        bestTop = Math.max(bestTop, obs.maxY);
+      }
+    }
+
+    return bestTop === -Infinity ? null : bestTop + eyeH;
+  }
+
+  private findCeilingSurfaceY(currentPos: THREE.Vector3, nextY: number, eyeH: number): number | null {
+    if (nextY <= currentPos.y) return null;
+    const currentTop = currentPos.y + 0.1;
+    const nextTop = nextY + 0.1;
+    let bestBottom = Infinity;
+
+    for (const obs of this.obstacles) {
+      if (currentPos.x + PLAYER_RADIUS <= obs.minX || currentPos.x - PLAYER_RADIUS >= obs.maxX) continue;
+      if (currentPos.z + PLAYER_RADIUS <= obs.minZ || currentPos.z - PLAYER_RADIUS >= obs.maxZ) continue;
+      if (obs.minY >= currentTop && obs.minY <= nextTop) {
+        bestBottom = Math.min(bestBottom, obs.minY);
+      }
+    }
+
+    return bestBottom === Infinity ? null : bestBottom - 0.1;
   }
 
   // -----------------------------------------------------------------------
